@@ -1,0 +1,826 @@
+---
+title: Predicting the Number of Rental Bikes Necessary in Seoul
+output: pdf_document
+header-includes:
+  - \usepackage{titling} 
+---
+
+
+# Background and Significance 
+
+Cycling is a great pass time in Seoul, Korea; the use of rental bikes allows tourists and local inhabitants to participate in this pass time or to get around the city almost any day of the year (Biking around Seoul 2019). 
+
+This case study explores possible regression models that can give accurate prediction as to how many rental bikes Seoul needs to have available to the city on an hourly basis. Many may agree that clear factors for the number of bikes rented would be temperature, rainfall, and even season. However, this may be agreed upon or refuted based on the real relationships within the data. The Seoul Bike Sharing Demand data set is used to analyse these factors and their efficacy towards predicting the number of bikes that must be available to rent at once.
+
+
+
+# Exploratory Data Analysis 
+
+### Required Libraries: 
+
+```{r message=FALSE, warning=FALSE} 
+library(dplyr) #Used for datatset manipulation 
+library(leaps) #used for table comparing possible variables 
+library(MASS) #used for boxcox transformation 
+library(tidyverse) #used for getting rid of NA 
+library(MPV) #used for PRESS Statistic 
+library(ggpubr) #used for graphical diagnostics of residuals
+library(olsrr) #used for graphical diagnostics of residuals
+library(ggplot2)
+library(MASS)
+library(Amelia)
+library(aod)
+library(pROC)
+library(cowplot)
+library(broom)
+library(ROCR)
+library(caret)
+library(vip)
+rm(list=ls())
+``` 
+
+### Data Description: 
+
+```{r echo=FALSE, message=FALSE}
+bikes = read.csv("SeoulBikeData.csv")
+
+head(bikes, n = 2) 
+
+``` 
+
+WRITE BETTER 
+
+The Data is  
+
+-One year 
+
+-4 seasons 
+
+-rented bikes per hour 
+
+-# observations is :  
+
+ 
+
+### Descriptive Statistics of Variables 
+
+[INSERT TABLE IN R THAT SHOWS MEAN, MIN, MAX …] 
+
+### Data Cleaning: 
+Each column has been checked for NA/NAN values 
+
+Filter out nonfunctioning days because no bikes will be used on those days thus providing no new information. We also filter out 0 values in our Y to help with later transformations and normality of the residuals. 
+
+```{r} 
+
+bike = bikes %>% filter(Functioning.Day == 'Yes') 
+
+bikes = bikes %>% filter(Rented.Bike.Count != 0) 
+
+bikes = bikes %>% drop_na() 
+
+``` 
+
+### Data Correlation: 
+
+```{r} 
+
+Y = bikes$Rented.Bike.Count 
+
+#correlation between all quantitative variables and Y 
+
+cor(cbind(Y, bikes$Temperature..C., bikes$Humidity..., bikes$Wind.speed..m.s., bikes$Visibility..10m. , bikes$Dew.point.temperature..C. , bikes$Solar.Radiation..MJ.m2. , bikes$Rainfall.mm. , bikes$Snowfall..cm.)) 
+
+``` 
+
+Plotting the data helped us find the most correlated variables. This is important since it plays a role in what features we must focus on when building out model.   
+
+The most correlated variables were Temperature(°C), Hour, Dew Point Temperature(°C) and Solar radiation. 
+
+However, upon closer look at the correlation between Temperature(°C) and Dew point temperature(°C) we found that these two variables are very highly correlated (Hyper correlation). So, we drop Dew Point Temperature(°C). This is because Temperature(°C) has a higher correlation with our Rented Bikes Count Variable. 
+
+ 
+
+### Data Visualization: 
+
+[INSERT PLOTS/VISUAL GRAPHS … FOR]
+
+-Which season has most rentals 
+
+-Temperature visualization plot/graph 
+
+### Relationships between predictors and Rented Bikes [Figure 1]
+```{r, echo=FALSE} 
+
+linefitter <- function(X, Y){ 
+
+  fit1 <- lm(Y~X, data=bikes) 
+
+  fit2 <- lm(Y~poly(X,2,raw=TRUE), data=bikes) 
+
+  fit3 <- lm(Y~poly(X,3,raw=TRUE), data=bikes) 
+
+  fit4 <- lm(Y~poly(X,4,raw=TRUE), data=bikes) 
+
+  fit5 <- lm(Y~poly(X,5,raw=TRUE), data=bikes) 
+
+  lines(X, predict(fit1, data.frame(x=X)), col='green') 
+
+  lines(X, predict(fit2, data.frame(x=X)), col='red') 
+
+  lines(X, predict(fit3, data.frame(x=X)), col='purple') 
+
+  lines(X, predict(fit4, data.frame(x=X)), col='blue') 
+
+  lines(X, predict(fit5, data.frame(x=X)), col='orange') 
+
+} 
+
+
+#Plotting Temperature against rented bikes 
+
+plot(bikes$Temperature..C., Y, main="Temperature against rented bikes", xlab="Temperature C") 
+
+linefitter(bikes$Temperature..C., Y) 
+
+#Plotting Humidity against rented bikes 
+
+plot(bikes$Humidity..., Y, main="Humidity against rented bikes", xlab="Humidity") 
+
+linefitter(bikes$Humidity..., Y) 
+
+#Plotting Solar Radiation against rented bikes 
+
+plot(bikes$Solar.Radiation..MJ.m2., Y, main="Solar Radiation against rented bikes", xlab="Solar Radiation") 
+
+linefitter(bikes$Solar.Radiation..MJ.m2., Y) 
+
+``` 
+
+
+### Dividing The Data: 
+
+Creating a 70/30 Train/Test Split 
+
+```{r} 
+
+set.seed(1006293967) 
+
+#Choose 5925 since that is 70% of our filtered bike data 
+
+bikesSample = sample(1:8465, 5925, replace=FALSE) 
+
+bikesSelect = bikes[bikesSample,] 
+
+bikesValidate = bikes[-bikesSample,] 
+
+``` 
+
+# Model  
+
+## Approach #1: 
+
+```{r}
+
+# logit
+bikes.fit_all_pred_logit <-  
+    glm(as.factor(Y) ~ bikes$Temperature..C.+bikes$Humidity...+ bikes$Wind.speed..m.s.+bikes$Visibility..10m. +   bikes$Solar.Radiation..MJ.m2. + bikes$Rainfall.mm. + bikes$Snowfall..cm.,  
+    data=bikes, family=binomial(link = "logit"))
+
+bikes.fit_all_pred_logit$aic
+
+# probit
+bikes.fit_all_pred_binomial_probit <-  glm(as.factor(Y) ~ bikes$Temperature..C.+bikes$Humidity...+ bikes$Wind.speed..m.s.+bikes$Visibility..10m. +   bikes$Solar.Radiation..MJ.m2. + bikes$Rainfall.mm. + bikes$Snowfall..cm.,   
+    data=bikes, family=binomial(link="probit"))
+
+bikes.fit_all_pred_binomial_probit$aic
+
+# cloglog
+bikes.fit_all_pred_binomial_cloglog <-  glm(as.factor(Y) ~ bikes$Temperature..C.+bikes$Humidity...+ bikes$Wind.speed..m.s.+bikes$Visibility..10m. +   bikes$Solar.Radiation..MJ.m2. + bikes$Rainfall.mm. + bikes$Snowfall..cm.,   
+    data=bikes, family=binomial(link="cloglog"))
+
+bikes.fit_all_pred_binomial_cloglog$aic
+
+# Binomial with a probit link has a slightly lower AIC value
+# Binomial with a logit link is easier to interpret
+
+# Select binomial logit
+bikes.fit_all_pred <- 
+    bikes.fit_all_pred_logit
+
+summary(bikes.fit_all_pred)
+
+# Importance of each variable
+varImp(bikes.fit_all_pred)
+
+# Visualization of importance of each var
+bikes.fit_all_pred %>% vip()
+
+```
+
+### Confidence Intervals 
+
+```{r warning=FALSE}
+#Confint function to obtain confidence intervals for the coefficient estimates
+confint(bikes.fit_all_pred)
+
+#Odds Ratios for Model Predictors
+exp(cbind(OR = coef(bikes.fit_all_pred), confint(bikes.fit_all_pred)))
+## THUS CLS, MAXDEPTH associated with increased odds of relapsing
+# see: https://rpubs.com/mascha/breastCancerSecond
+
+anova(bikes.fit_all_pred)
+```
+
+### Model Selection (without interactions)
+
+```{r, results="hide", warning =FALSE}
+
+# Fit no predictors
+bikes.fit_no_pred <- glm(as.factor(Y) ~ 1, 
+  data=bikes, family=binomial)
+
+# Step backwards through model finding the best fit
+# Starting with all predictors
+bikes.fit_no_interaction_back <- 
+    step(bikes.fit_all_pred, direction="backward", test = "Chisq")
+
+print("")
+print("Start of forward model selection")
+print("")
+
+# Step forwards through model finding the best fit
+# Starting with no predictors
+bikes.fit_no_interaction_forward <- 
+    step(bikes.fit_no_pred, scope =~ bikes$Temperature..C.+bikes$Humidity...+ bikes$Wind.speed..m.s.+bikes$Visibility..10m. +   bikes$Solar.Radiation..MJ.m2. + bikes$Rainfall.mm. + bikes$Snowfall..cm.,
+    direction="forward", test = "Chisq")
+
+print("")
+print("Start of both directions model selection")
+print("")
+
+# Step both directions through model finding the best fit
+# Starting with all predictors
+bikes.fit_no_interaction_both = step(bikes.fit_all_pred, direction = "both", test="Chisq")
+
+
+```
+
+### Model comparison (without interactions)
+
+```{r, results="hide"}
+
+summary(bikes.fit_no_interaction_back)
+summary(bikes.fit_no_interaction_forward)
+summary(bikes.fit_no_interaction_both)
+
+# All selected models without interactions are the same
+
+```
+
+
+### Model selected (without interactions)
+
+```{r}
+
+# Backward, forward and both selected model are the same
+bikes.fit_no_interaction <- bikes.fit_no_interaction_both
+
+summary(bikes.fit_no_interaction)
+
+# Pearson standard residuals
+plot(bikes.fit_no_interaction, which=1)
+
+
+```
+
+
+### Model selection with 2nd degree interactions
+
+```{r}
+# Model with 2nd degree interactions
+bikes.fit_all_interactions <- lm(Y ~ (bikes$Temperature..C.+bikes$Humidity...+ bikes$Wind.speed..m.s.+bikes$Visibility..10m. + bikes$Solar.Radiation..MJ.m2. + bikes$Rainfall.mm. + bikes$Snowfall..cm.)^2)
+
+# Glm evaluation
+bikes.fit_all_interactions_glm <- 
+    glm(as.factor(Y) ~ (bikes$Temperature..C.+bikes$Humidity...+ bikes$Wind.speed..m.s.+bikes$Visibility..10m. +   bikes$Solar.Radiation..MJ.m2. + bikes$Rainfall.mm. + bikes$Snowfall..cm.)^2,  
+    data=bikes, family=binomial(link = "logit"))
+
+summary(bikes.fit_all_interactions_glm)
+
+# Importance of each variable
+varImp(bikes.fit_all_interactions_glm)
+
+# Visualization of importance of each var
+bikes.fit_all_interactions_glm %>% vip()
+```
+
+### Models with 2nd degree interactions
+
+```{r,  results="hide", warning=FALSE}
+
+# Stepping backwards through model doesn't result in a good model and takes far 
+# too long
+
+# Step forwards through model finding the best fit
+# Starting with no predictors
+bikes.fit_all_interactions_forward <- 
+    step(bikes.fit_no_pred, scope =~ (bikes$Temperature..C.+bikes$Humidity...+ bikes$Wind.speed..m.s.+bikes$Visibility..10m. +   bikes$Solar.Radiation..MJ.m2. + bikes$Rainfall.mm. + bikes$Snowfall..cm.)^2,
+    direction="forward", test = "Chisq")
+
+print("")
+print("Start of both directions model selection")
+print("")
+
+# Step both directions through model finding the best fit
+# Starting with all predictors with scope of 2nd degree interactions
+bikes.fit_all_interactions_both <- 
+    step(bikes.fit_all_pred,
+    scope =~ (bikes$Temperature..C.+bikes$Humidity...+ bikes$Wind.speed..m.s.+bikes$Visibility..10m. +   bikes$Solar.Radiation..MJ.m2. + bikes$Rainfall.mm. + bikes$Snowfall..cm.)^2, direction = "both", test="Chisq")
+
+```
+
+
+```{r}
+library(survival)
+
+Surv(Y, bikes$Humidity...)[1:10]
+f1 <- survfit(Surv(Y, bikes$Humidity...) ~ 1, data = bikes)
+names(f1)
+plot(survfit(Surv(Y, bikes$Humidity...) ~ 1, data = bikes), 
+     xlab = "Days", 
+     ylab = "Overall survival probability")
+summary(survfit(Surv(Y, bikes$Humidity...) ~ 1, data = bikes), times = 365.25)
+
+```
+
+ 
+
+## Approach #2: 
+
+Since Temperature and Dew Point Temperature have high correlation, we only use Temperature.  
+
+Since Humidity is moderately correlated with a few other predictors, we take it as a common denominator and drop the other variables. However, since Solar Radiation is of higher correlation with rented bike count, we include this as well.  
+
+
+When plotting rented bike count against each of the predictors as seen in Figure 1: we notice our Y value fitting better with polynomial structures. Therfore we decide to take a polynomial model approach
+
+We take our Seasons as a Qualitative variable and use dummy variables D1 (Spring), D2 (Summer), and D3 (Autumn) for them. Our base season is Winter with D1, D2, and D3 = 0.
+
+And our predictors:
+
+Temperature as X1
+
+Humidity as X2
+
+Solar Radiation as X4
+
+With interaction terms included, our full model is:
+
+Y = b1X1 + b2X2 + b3X3 + B1X1^2 + B2X2^2 + B3X3^2 + a1D1 + a2D2 + a3D3 + A1X1* X2 + A2X2* X3 + A3X1* X3 +
+
+  b11X1* D1 + b21X2* D1 + b31X3* D1 + B11X1^2* D1 + B21X2^2* D1 + B31X3^2* D1 + A11X1* X2* D1 + A21X2* X3* D1 + A31X1* X3* D1 +
+  
+  b12X1* D2 + b22X2* D2 + b32X3* D2 + B12X1^2* D2 + B22X2^2* D2 + B32X3^2* D2 + A12X1* X2* D2 + A22X2* X3* D2 + A32X1* X3* D2 +
+  
+  b13X1* D3 + b23X2* D3 + b33X3* D3 + B13X1^2* D3 + B23X2^2* D3 + B33X3^2* D3 + A13X1* X2* D3 + A23X2* X3* D3 + A33X1* X3* D3
+
+```{r, echo=FALSE, message=FALSE}
+Y = bikesSelect$Rented.Bike.Count
+
+D1 = as.numeric(bikesSelect$Seasons == "Spring")
+D2 = as.numeric(bikesSelect$Seasons == "Summer")
+D3 = as.numeric(bikesSelect$Seasons == "Autumn")
+
+
+X1 = bikesSelect$Temperature..C.
+X2 = bikesSelect$Humidity...
+X4 = bikesSelect$Solar.Radiation..MJ.m2.
+
+#Center our Values
+X1Poly = X1 - mean(X1)
+X2Poly = X2 - mean(X2)
+X4Poly = X4 - mean(X4)
+```
+
+```{r} 
+#full model 
+regPoly = lm(Y ~ X1Poly*D1 + X2Poly*D1 + X4Poly*D1 + I(X1Poly^2)*D1 + I(X2Poly^2)*D1 + I(X4Poly^2)*D1 + I(X1Poly*X2Poly)*D1 + I(X2Poly*X4Poly)*D1 + I(X1Poly*X4Poly)*D1 + X1Poly*D2 + X2Poly*D2 + X4Poly*D2 + I(X1Poly^2)*D2 + I(X2Poly^2)*D2 + I(X4Poly^2)*D2 + I(X1Poly*X2Poly)*D2 + I(X2Poly*X4Poly)*D2 + I(X1Poly*X4Poly)*D2 + X1Poly*D3 + X2Poly*D3 + X4Poly*D3 + I(X1Poly^2)*D3 + I(X2Poly^2)*D3 + I(X4Poly^2)*D3 + I(X1Poly*X2Poly)*D3 + I(X2Poly*X4Poly)*D3 + I(X1Poly*X4Poly)*D3)
+``` 
+A table of criteria for all possible combinations of models from our full model was created.
+
+```{r echo=FALSE} 
+n = length(Y)  
+
+allPolyPoss = regsubsets(Y ~ X1Poly*D1 + X2Poly*D1 + X4Poly*D1 + I(X1Poly^2)*D1 + I(X2Poly^2)*D1 + I(X4Poly^2)*D1 + I(X1Poly*X2Poly)*D1 + I(X2Poly*X4Poly)*D1 + I(X1Poly*X4Poly)*D1 + X1Poly*D2 + X2Poly*D2 + X4Poly*D2 + I(X1Poly^2)*D2 + I(X2Poly^2)*D2 + I(X4Poly^2)*D2 + I(X1Poly*X2Poly)*D2 + I(X2Poly*X4Poly)*D2 + I(X1Poly*X4Poly)*D2 + X1Poly*D3 + X2Poly*D3 + X4Poly*D3 + I(X1Poly^2)*D3 + I(X2Poly^2)*D3 + I(X4Poly^2)*D3 + I(X1Poly*X2Poly)*D3 + I(X2Poly*X4Poly)*D3 + I(X1Poly*X4Poly)*D3, nbest = 1, data = bikesSelect) 
+
+  
+
+aprout = summary(allPolyPoss) 
+
+pprime = apply(aprout$which,1,sum) 
+
+aprout$aic <- aprout$bic - log(n) * pprime + 2*pprime 
+
+#Turn into a dataframe 
+
+allPolyPossDf = as.data.frame(with(aprout, round(cbind(which,rsq,adjr2,cp,bic,aic),3))) 
+
+ #We minimize cp, bic, and aic. We Maximize rsq and adjr2 
+
+allPolyPossDF = allPolyPossDf %>% arrange(cp, bic, aic, desc(rsq), desc(adjr2))  
+head(allPolyPossDF, n=1)
+``` 
+
+From this we attain our first reduced model option; the model in the table with the highest Rsquared and Adjusted Rsquared values and whilst having the lowest Cp, AIC, and BIC values.  
+
+
+We call this model redPoly1: 
+```{r} 
+#Reduced model 1 
+redPoly1 = lm(Y ~ X1Poly + X2Poly + I(X1Poly^2) + I(X2Poly^2) + I(X1Poly*X2Poly) + I(X1Poly*X4Poly) + I(X1Poly^2):D3 + X1Poly:D3) 
+``` 
+
+Our next model is attained by doing a backwards elimination, we call this model redPoly2: 
+```{r} 
+#Reduced model 2 
+redPoly2 = lm(Y ~ X1Poly*D1 + X2Poly*D1 + X4Poly*D1 + I(X1Poly^2)*D1 + I(X2Poly^2)*D1 + I(X4Poly^2)*D1 + I(X1Poly*X2Poly)*D1 + I(X2Poly*X4Poly)*D1 + I(X1Poly*X4Poly)*D1 + X1Poly*D2 + X2Poly*D2 + X4Poly*D2 + I(X1Poly^2)*D2 + I(X2Poly^2)*D2 + I(X4Poly^2)*D2 + I(X1Poly*X2Poly)*D2 + I(X1Poly*X4Poly)*D2 + X2Poly*D3 + I(X2Poly^2)*D3 + I(X4Poly^2)*D3 + I(X1Poly*X2Poly)*D3 + I(X2Poly*X4Poly)*D3 + I(X1Poly*X4Poly)*D3) 
+``` 
+
+This backward elimination was done with an alpha of 0.2. We removed predictors which caused the p-value of the model to be greater than our alpha thus eliminating unneeded variables.
+ 
+
+### Conducting F-tests on our Reduced Models 
+
+Here we are testing for if a subset of coefficients = 0; Thus we are using an F test on a reduced and full model. 
+
+H0: coefficients in front of all the variables OTHER than the ones in our reduced polynomial model (redPolyX) = 0 
+
+Ha: At least one of the coefficients infront of a variable OTHER than the ones in the redPolyX model is not 0. 
+
+```{r, echo=FALSE} 
+#For redPoly1 
+anovaR1 = anova(redPoly1, regPoly) 
+print(anovaR1["F"])
+qf(0.95, 40, 6123) #Critical value since n = 6132 and p' = 39+1 = 40 
+
+``` 
+
+For our first reduced model we see that our Fstatistic values is = 41.039 and the Critical value is 1.395982. Thus, we reject the null hypothesis and conclude that one of the variables in the full model are still significant. 
+
+```{r, echo=FALSE} 
+#For redPoly2 
+anovaR2 = anova(redPoly2, regPoly)
+print(anovaR2["F"])
+qf(0.95, 40, 6123) #Critical value since n = 6132 and p' = 39+1 = 40 
+``` 
+
+For our first reduced model we see that our Fstatistic values is = 0.1522 and the Critical value is 1.395982. Thus, we fail to reject the null hypothesis and conclude that the other coefficients outside of the reduced polynomial model = 0 or close. Therefore, we say that this is more significant than our full model. 
+
+ 
+
+### Model Selection 
+
+From our 3 options; fullPoly, redPoly1, and redPoly2. We choose the redPoly2 since the F-test allows us to reduce our model to that size.  
+
+To further our choice, we compare AIC values of all 3 models using SSE from our anova tables generated when calculating the f statistic: 
+
+```{r, echo=FALSE} 
+
+#AIC of redPoly2 
+print("AIC of redPoly2 ")
+n*log(1263773338) - n*log(n) + 2*22 
+
+#AIC fullPoly 
+print("AIC regPoly (Full model)")
+n*log(1262548656) - n*log(n) + 2*40 
+
+#AIC of redPoly1 
+print("AIC of redPoly1 ")
+n*log(1457739573) - n*log(n) + 2*9 
+``` 
+
+It is clear that our lowest AIC value is with redPoly2. Hence we keep redPoly2 as our final choice. 
+
+ 
+
+# Model Diagnostics 
+
+## Approach 1:
+
+### Checking regression assumptions
+
+```{r} 
+
+#plotting residuals 
+resid1 = bikes.fit_all_interactions$residuals 
+fit.Y1 = predict(bikes.fit_all_interactions) 
+
+#plot them 
+
+plot(fit.Y1, resid1, pch=20, cex=1.5, xlab="Fitted Values", ylab="Residuals");abline(0,0) 
+
+qqnorm(resid1); qqline(resid1) 
+
+hist(resid1); 
+
+``` 
+```{r} 
+
+#boxcox transformation 
+#bcbikes.fit_all_interactions = boxcox(bikes.fit_all_interactions) 
+#mylambda = bcbikes.fit_all_interactions$x[which.max(bcbikes.fit_all_interactions$y)] 
+#mylambda = 0.2626263
+
+  
+
+Y1 = (bikes$Rented.Bike.Count)^0.2626263
+
+  
+
+bikes.fit_all_interactions_trans = lm(Y1 ~ (bikes$Temperature..C.+bikes$Humidity...+ bikes$Wind.speed..m.s.+bikes$Visibility..10m. + bikes$Solar.Radiation..MJ.m2. + bikes$Rainfall.mm. + bikes$Snowfall..cm.)^2) 
+
+  
+
+#plotting residuals 
+
+residt = bikes.fit_all_interactions_trans$residuals 
+
+fit.Yt = predict(bikes.fit_all_interactions_trans) 
+
+  
+
+#plot them 
+
+plot(fit.Yt, residt, pch=20, cex=1.5, xlab="Fitted Values", ylab="Residuals");abline(0,0) 
+
+qqnorm(residt); qqline(residt) 
+
+hist(residt); 
+
+``` 
+ 
+
+## Approach 2: 
+
+### Checking regression assumptions 
+
+```{r} 
+
+#plotting residuals 
+
+resid2 = redPoly2$residuals 
+
+fit.Y2 = predict(redPoly2) 
+
+  
+
+#plot them 
+
+plot(fit.Y2, resid2, pch=20, cex=1.5, xlab="Fitted Values", ylab="Residuals");abline(0,0) 
+
+qqnorm(resid2); qqline(resid2) 
+
+hist(resid2); 
+
+``` 
+
+
+
+
+We conclude our residuals are not normal because: 
+
+We notice a skewness in our residual histogram 
+
+A trumpet shape in our residual plot 
+
+A nonlinear normal qq plot  
+
+ 
+
+We can use a boxcox transformation to find a lambda such that Y^lambda helps the normality of our residuals. The lambda found was 0.3030303; therefore we use this to transform our model. 
+
+ 
+
+```{r} 
+
+#boxcox transformation 
+
+bcregPoly = boxcox(redPoly2) 
+
+  
+
+mylambda = bcregPoly$x[which.max(bcregPoly$y)] 
+
+  
+
+mylambda 
+
+  
+
+Y2 = Y^0.3030303 
+
+  
+redPolyTrans = lm(Y2 ~ X1Poly*D1 + X2Poly*D1 + X4Poly*D1 + I(X1Poly^2)*D1 + I(X2Poly^2)*D1 + I(X4Poly^2)*D1 + I(X1Poly*X2Poly)*D1 + I(X1Poly*X4Poly)*D1 + X1Poly*D2 + X4Poly*D2 + I(X1Poly^2)*D2 + I(X2Poly^2)*D2 + I(X4Poly^2)*D2 + I(X1Poly*X2Poly)*D2 + I(X1Poly*X4Poly)*D2 + X2Poly*D3 + I(X1Poly^2)*D3 + I(X4Poly^2)*D3 + I(X1Poly*X2Poly)*D3 + I(X2Poly*X4Poly)*D3 + I(X1Poly*X4Poly)*D3) 
+
+
+#plotting residuals 
+
+resid = redPolyTrans$residuals 
+
+fit.Y = predict(redPolyTrans) 
+
+  
+
+#plot them 
+
+plot(fit.Y, resid, pch=20, cex=1.5, xlab="Fitted Values", ylab="Residuals");abline(0,0) 
+
+qqnorm(resid); qqline(resid) 
+
+hist(resid); 
+
+
+``` 
+
+It is clear that there has been an improvement in our residuals: 
+
+We’ve eliminated skewness in our residual histogram 
+
+There is no longer a trumpet shape in our residual plot 
+
+The normal qq plot is now quite linear
+
+
+### Graphical diagnostics of residuals
+
+to ensure that all of our residuals are fine, we do one more set of testing (note that all graphs assume we are using a large data set which is fitting since we are using a large data set):
+```{r}
+ols_plot_added_variable(redPolyTrans) # Added Variable Plots 
+ols_plot_cooksd_chart(redPolyTrans) # Cook's Distance 
+ols_plot_dfbetas(redPolyTrans) # DFBETAS 
+ols_plot_dffits(redPolyTrans) # DIFFITS 
+ols_plot_resid_lev(redPolyTrans) # Studentized deleted Residual vs Leverages 
+ols_plot_resid_stud_fit(redPolyTrans) # Studentized deleted Residual vs Predicted values 
+p1 <- ols_plot_cooksd_chart(redPolyTrans)
+p4 <- ols_plot_dffits(redPolyTrans)
+p5 <- ols_plot_resid_lev(redPolyTrans)
+p6 <- ols_plot_resid_stud_fit(redPolyTrans)
+```
+Most notable outlier & leverage points:
+- 1090 
+- 1967 
+- 797 
+- 1647
+These residuals have large Cook's Distance values and are on the far ends of influential point graphs.
+
+
+
+### Final evaluation of the model 
+
+```{r} 
+summary(redPolyTrans) 
+
+#Calculate AIC 
+
+n*log(9735.9) - n*log(n) + 2*22 
+
+``` 
+
+We notice that the model has improved drastically with the transformation: 
+
+We have an improved Rsquared of 0.6232 and adjusted Rsquared of 0.6211 from our previous values of 0.5773 and 0.5749 respectively 
+
+Our MSE is now 1.65 (from residual standard error squared) from our previous 172964 
+
+We achieve our lowest AIC value yet of 2986.588 
+
+ 
+
+# Model Validation 
+
+## Approach 1 and 2 Validation:
+
+### Using Machine Learning to Validatae
+
+We optimize selected model by the use of repeated cross validation ‘control’ variable - “fitControl”. By that we will be able to limit model over fitting and make sure that it will then generalize well to an unseen data set
+
+For APPROACH 1:
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           #number of folds is 10 by default
+                           repeats = 3, 
+                           savePredictions = T)
+
+
+# Predicted values
+predict1 <- predict(bikes.fit_all_interactions_trans, bikes, type = 'response')
+
+# confusion matrix to count the number of times True instances are classified are False
+table_bike <- table(bikes$Rented.Bike.Count, predict1 > 0.5)
+
+# Model accuracy calculated by summing the true pos + true neg over the total observation
+accuracy_Test <- sum(diag(table_bike)) / sum(table_bike)
+accuracy_Test
+```
+
+For APPROACH 2:
+```{r}
+# Predicted values
+predict2 <- predict(redPolyTrans, bikes, type = 'response')
+
+# confusion matrix to count the number of times True instances are classified are False
+table_bike <- table(bikesSelect$Rented.Bike.Count, predict2 > 0.5)
+
+# Model accuracy calculated by summing the true pos + true neg over the total observation
+accuracy_Test <- sum(diag(table_bike)) / sum(table_bike)
+accuracy_Test
+```
+
+## PRESS Statistic and MSPE for Validation
+
+### Approach 1:
+```{r}
+#INSERT MSE
+summary(bikes.fit_all_interactions_trans)
+
+#predict on the validation sample 
+prediction1 = predict(bikes.fit_all_interactions_trans, bikesValidate[, c("Rented.Bike.Count", "Temperature..C.", "Humidity...", "Solar.Radiation..MJ.m2.")])
+delta = bikes[-bikesSample] - prediction1
+
+n.star = dim(bikesValidate)[1]
+MSPE = sum((delta)^2)/n.star
+MSPE
+
+#PRESS Statistic
+PRESS(bikes.fit_all_interactions_trans)
+```
+
+
+
+### Approach 2:
+We compare MSE and MSPE for Approach 2
+
+```{r}
+MSE = 9735.9/(n-22)
+MSE
+#predict on the validation sample 
+prediction2 = predict(redPolyTrans, bikesValidate[, c("Rented.Bike.Count", "Temperature..C.", "Humidity...", "Solar.Radiation..MJ.m2.")])
+delta = bikes[-bikesSample] - prediction2
+
+n.star = dim(bikesValidate)[1]
+MSPE = sum((delta)^2)/n.star
+MSPE
+
+#PRESS Statistic
+PRESS(redPolyTrans)
+```
+
+ 
+
+ 
+## MACHINE LEARNING (VALIDATION)
+
+```{r}
+
+set.seed(123)
+training.samples <- bikesSelect$Rented.Bike.Count %>%
+  createDataPartition(p = 0.7, list = FALSE)
+train.data  <- bikesSelect[training.samples, ]
+test.data <- bikesSelect[-training.samples, ]
+# Build the model
+## RSME - standard deviation of the residuals (prediction errors)
+## this method is much preferred since we have a large data set to work with 
+
+## overall objective : 
+# i) train the model on the training data set, ii) apply the model to the test data set to predict the outcome of obs that are unseen
+
+## Model 1 - 2nd degree interactions
+model <- lm(Rented.Bike.Count ~(Temperature..C.+Humidity...+ Wind.speed..m.s.+Visibility..10m. + Solar.Radiation..MJ.m2. + Rainfall.mm. + Snowfall..cm.)^2, data = train.data)
+# Make predictions and compute the R2, RMSE and MAE
+predictions <- model %>% predict(test.data)
+RMSE = RMSE(predictions, test.data$Rented.Bike.Count)
+RMSE
+
+#When comparing two models, the one that produces the lowest test sample RMSE is the preferred model, a better measure to determine how accurate the model predicts the response 
+
+## Model 2 - RedPolyTrans
+predictions2 <- redPolyTrans %>% predict(test.data)
+RMSE = RMSE(predictions2, test.data$Rented.Bike.Count)
+RMSE
+
+RMSE(predictions, test.data$Rented.Bike.Count)/mean(test.data$Rented.Bike.Count)
+RMSE(predictions2, test.data$Rented.Bike.Count)/mean(test.data$Rented.Bike.Count)
+
+## to be sure that approach 1 is the preferred model, we should check for mean absolute error - a measure of the prediction error, less sensitive to outliers compared to RMSE
+
+MAE = MAE(predictions, bikesSelect$Rented.Bike.Count)
+mae2 = MAE(predictions2, bikesSelect$Rented.Bike.Count)
+
+MAE
+mae2
+```
+
+
+
+ 
